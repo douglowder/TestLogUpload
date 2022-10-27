@@ -1,0 +1,177 @@
+diff --git a/node_modules/expo-updates/CHANGELOG.md b/node_modules/expo-updates/CHANGELOG.md
+index 3b1088a..473a521 100644
+--- a/node_modules/expo-updates/CHANGELOG.md
++++ b/node_modules/expo-updates/CHANGELOG.md
+@@ -27,6 +27,8 @@ _This version does not introduce any user-facing changes._
+ ## 0.14.3 — 2022-07-25
+ 
+ ### 🐛 Bug fixes
++- [iOS] Flag to enable native debugging of updates. ([#19292](https://github.com/expo/expo/pull/19292) by [@douglowder](https://github.com/douglowder))
++- [Android] Flag to enable native debugging of updates. ([#19441](https://github.com/expo/expo/pull/19441) by [@douglowder](https://github.com/douglowder))
+ 
+ - Deprecated the unreliable `source-login-scripts.sh` and sourcing the Node.js binary path from `.xcode.env` and `.xcode.env.local`. ([#18330](https://github.com/expo/expo/pull/18330) by [@kudo](https://github.com/kudo))
+ 
+diff --git a/node_modules/expo-updates/android/build.gradle b/node_modules/expo-updates/android/build.gradle
+index 145c2b3..aaa2617 100644
+--- a/node_modules/expo-updates/android/build.gradle
++++ b/node_modules/expo-updates/android/build.gradle
+@@ -6,6 +6,18 @@ apply plugin: 'maven-publish'
+ group = 'host.exp.exponent'
+ version = '0.14.6'
+ 
++def ex_updates_native_debug_env = System.getenv("EX_UPDATES_NATIVE_DEBUG") ?: "0"
++def ex_updates_native_debug = ex_updates_native_debug_env == "1" ? "true" : "false"
++
++// For native updates debugging, override these properties
++if (findProject(":app")) {
++  def appProjectExt = project(":app").ext
++  if (appProjectExt.has("react") && ex_updates_native_debug) {
++    appProjectExt.react.bundleInDebug = true
++    appProjectExt.react.devDisabledInDebug = true
++  }
++}
++
+ apply from: "../scripts/create-manifest-android.gradle"
+ 
+ buildscript {
+@@ -80,6 +92,7 @@ android {
+     versionName '0.14.6'
+     consumerProguardFiles("proguard-rules.pro")
+     testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
++    buildConfigField("boolean", "EX_UPDATES_NATIVE_DEBUG", ex_updates_native_debug)
+     // uncomment below to export the database schema when making changes
+     /* javaCompileOptions {
+       annotationProcessorOptions {
+diff --git a/node_modules/expo-updates/android/src/main/java/expo/modules/updates/UpdatesPackage.kt b/node_modules/expo-updates/android/src/main/java/expo/modules/updates/UpdatesPackage.kt
+index df82184..bc91b20 100644
+--- a/node_modules/expo-updates/android/src/main/java/expo/modules/updates/UpdatesPackage.kt
++++ b/node_modules/expo-updates/android/src/main/java/expo/modules/updates/UpdatesPackage.kt
+@@ -25,19 +25,20 @@ class UpdatesPackage : Package {
+   }
+ 
+   override fun createReactNativeHostHandlers(context: Context): List<ReactNativeHostHandler> {
++    val useNativeDebug = BuildConfig.EX_UPDATES_NATIVE_DEBUG
+     val handler: ReactNativeHostHandler = object : ReactNativeHostHandler {
+       private var mShouldAutoSetup: Boolean? = null
+ 
+       override fun getJSBundleFile(useDeveloperSupport: Boolean): String? {
+-        return if (shouldAutoSetup(context) && !useDeveloperSupport) UpdatesController.instance.launchAssetFile else null
++        return if (shouldAutoSetup(context) && (useNativeDebug || !useDeveloperSupport)) UpdatesController.instance.launchAssetFile else null
+       }
+ 
+       override fun getBundleAssetName(useDeveloperSupport: Boolean): String? {
+-        return if (shouldAutoSetup(context) && !useDeveloperSupport) UpdatesController.instance.bundleAssetName else null
++        return if (shouldAutoSetup(context) && (useNativeDebug || !useDeveloperSupport)) UpdatesController.instance.bundleAssetName else null
+       }
+ 
+       override fun onWillCreateReactInstanceManager(useDeveloperSupport: Boolean) {
+-        if (shouldAutoSetup(context) && !useDeveloperSupport) {
++        if (shouldAutoSetup(context) && (useNativeDebug || !useDeveloperSupport)) {
+           UpdatesController.initialize(context)
+         }
+       }
+@@ -45,7 +46,7 @@ class UpdatesPackage : Package {
+       override fun onDidCreateReactInstanceManager(reactInstanceManager: ReactInstanceManager, useDeveloperSupport: Boolean) {
+         // WHEN_VERSIONING_REMOVE_FROM_HERE
+         // This code path breaks versioning and is not necessary for Expo Go.
+-        if (shouldAutoSetup(context) && !useDeveloperSupport) {
++        if (shouldAutoSetup(context) && (useNativeDebug || !useDeveloperSupport)) {
+           UpdatesController.instance.onDidCreateReactInstanceManager(reactInstanceManager)
+         }
+         // WHEN_VERSIONING_REMOVE_TO_HERE
+diff --git a/node_modules/expo-updates/ios/EXUpdates.podspec b/node_modules/expo-updates/ios/EXUpdates.podspec
+index b2ad346..cfb7e81 100644
+--- a/node_modules/expo-updates/ios/EXUpdates.podspec
++++ b/node_modules/expo-updates/ios/EXUpdates.podspec
+@@ -23,14 +23,19 @@ Pod::Spec.new do |s|
+   s.dependency 'EASClient'
+   s.dependency 'ASN1Decoder', '~> 1.8'
+ 
++  ex_updates_native_debug = ENV['EX_UPDATES_NATIVE_DEBUG'] == '1'
++
++  other_c_flags = ex_updates_native_debug ? "$(inherited) -DEX_UPDATES_NATIVE_DEBUG=1" : "$(inherited)"
++
+   s.pod_target_xcconfig = {
+     'GCC_TREAT_INCOMPATIBLE_POINTER_TYPE_WARNINGS_AS_ERRORS' => 'YES',
+     'GCC_TREAT_IMPLICIT_FUNCTION_DECLARATIONS_AS_ERRORS' => 'YES',
+     'DEFINES_MODULE' => 'YES',
+-    'SWIFT_COMPILATION_MODE' => 'wholemodule'
++    'SWIFT_COMPILATION_MODE' => 'wholemodule',
++    'OTHER_CFLAGS[config=Debug]' => other_c_flags
+   }
+ 
+-  if !$ExpoUseSources&.include?(package['name']) && ENV['EXPO_USE_SOURCE'].to_i == 0 && File.exist?("#{s.name}.xcframework") && Gem::Version.new(Pod::VERSION) >= Gem::Version.new('1.10.0')
++  if !ex_updates_native_debug && !$ExpoUseSources&.include?(package['name']) && ENV['EXPO_USE_SOURCE'].to_i == 0 && File.exist?("#{s.name}.xcframework") && Gem::Version.new(Pod::VERSION) >= Gem::Version.new('1.10.0')
+     s.source_files = "#{s.name}/**/*.h"
+     s.vendored_frameworks = "#{s.name}.xcframework"
+   else
+@@ -38,9 +43,10 @@ Pod::Spec.new do |s|
+   end
+ 
+   if $expo_updates_create_manifest != false
++    force_bundling_flag = ex_updates_native_debug ? "export FORCE_BUNDLING=1\n" : ""
+     s.script_phase = {
+       :name => 'Generate app.manifest for expo-updates',
+-      :script => 'bash -l -c "$PODS_TARGET_SRCROOT/../scripts/create-manifest-ios.sh"',
++      :script => force_bundling_flag + 'bash -l -c "$PODS_TARGET_SRCROOT/../scripts/create-manifest-ios.sh"',
+       :execution_position => :before_compile
+     }
+ 
+diff --git a/node_modules/expo-updates/ios/EXUpdates/EXUpdatesUtils.h b/node_modules/expo-updates/ios/EXUpdates/EXUpdatesUtils.h
+index a5487b9..edd7093 100644
+--- a/node_modules/expo-updates/ios/EXUpdates/EXUpdatesUtils.h
++++ b/node_modules/expo-updates/ios/EXUpdates/EXUpdatesUtils.h
+@@ -18,6 +18,7 @@ NS_ASSUME_NONNULL_BEGIN
+ + (NSString *)getRuntimeVersionWithConfig:(EXUpdatesConfig *)config;
+ + (NSURL *)urlForBundledAsset:(EXUpdatesAsset *)asset;
+ + (NSString *)pathForBundledAsset:(EXUpdatesAsset *)asset;
+++ (BOOL)isNativeDebuggingEnabled;
+ 
+ @end
+ 
+diff --git a/node_modules/expo-updates/ios/EXUpdates/EXUpdatesUtils.m b/node_modules/expo-updates/ios/EXUpdates/EXUpdatesUtils.m
+index 3ff9497..ab39ec1 100644
+--- a/node_modules/expo-updates/ios/EXUpdates/EXUpdatesUtils.m
++++ b/node_modules/expo-updates/ios/EXUpdates/EXUpdatesUtils.m
+@@ -134,6 +134,15 @@ static NSString * const EXUpdatesUtilsErrorDomain = @"EXUpdatesUtils";
+     : [[NSBundle mainBundle] pathForResource:asset.mainBundleFilename ofType:asset.type];
+ }
+ 
+++ (BOOL)isNativeDebuggingEnabled
++{
++#if EX_UPDATES_NATIVE_DEBUG
++  return YES;
++#else
++  return NO;
++#endif
++}
++
+ @end
+ 
+ NS_ASSUME_NONNULL_END
+diff --git a/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesAppDelegateSubscriber.swift b/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesAppDelegateSubscriber.swift
+index 395b126..598e164 100644
+--- a/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesAppDelegateSubscriber.swift
++++ b/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesAppDelegateSubscriber.swift
+@@ -5,7 +5,7 @@ import EXUpdatesInterface
+ 
+ public class ExpoUpdatesAppDelegateSubscriber: ExpoAppDelegateSubscriber {
+   public func application(_ application: UIApplication, willFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+-    if EXAppDefines.APP_DEBUG {
++    if EXAppDefines.APP_DEBUG && !EXUpdatesUtils.isNativeDebuggingEnabled() {
+       EXUpdatesControllerRegistry.sharedInstance().controller = EXUpdatesDevLauncherController.sharedInstance()
+     }
+     return true
+diff --git a/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift b/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift
+index cf7087a..d6a699f 100644
+--- a/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift
++++ b/node_modules/expo-updates/ios/EXUpdates/ReactDelegateHandler/ExpoUpdatesReactDelegateHandler.swift
+@@ -10,7 +10,7 @@ public class ExpoUpdatesReactDelegateHandler: ExpoReactDelegateHandler, EXUpdate
+   private var rootViewModuleName: String?
+   private var rootViewInitialProperties: [AnyHashable: Any]?
+   private lazy var shouldEnableAutoSetup: Bool = {
+-    if EXAppDefines.APP_DEBUG {
++    if EXAppDefines.APP_DEBUG && !EXUpdatesUtils.isNativeDebuggingEnabled() {
+       return false
+     }
+     // if Expo.plist not found or its content is invalid, disable the auto setup
