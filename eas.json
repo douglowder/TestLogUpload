@@ -12,6 +12,21 @@
         "buildConfiguration": "Debug"
       }
     },
+    "preview_debug": {
+      "env": {
+        "EX_UPDATES_NATIVE_DEBUG": "1"
+      },
+      "android": {
+        "distribution": "internal",
+        "withoutCredentials": true,
+        "gradleCommand": ":app:assembleDebug"
+      },
+      "ios": {
+        "simulator": true,
+        "buildConfiguration": "Debug"
+      },
+      "channel": "preview_debug"
+    },
     "preview": {
       "distribution": "internal"
     },
